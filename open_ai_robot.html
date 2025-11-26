@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Chat — Mobile Friendly</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+html, body { height:100%; margin:0; padding:0; font-family: Arial, sans-serif; background:#f5f5f5; display:flex; flex-direction:column; }
+h1 { text-align:center; font-size:1.5em; margin:6px 0 12px; flex-shrink:0; }
+
+#chat {
+    flex:1;
+    margin:0 10px;
+    border:1px solid #ccc;
+    border-radius:10px;
+    background:#fff;
+    padding:10px;
+    overflow-y:auto;
+    display:flex;
+    flex-direction:column;
+    gap:5px;
+    scroll-behavior: smooth;
+}
+
+.message { padding:10px; border-radius:15px; word-wrap:break-word; white-space:pre-wrap; overflow-wrap:break-word; max-width:80%; font-size:0.95em; position:relative; }
+.user { background:#d0f0fd; text-align:right; margin-left:auto; }
+.ai { background:#d6ffd6; text-align:left; margin-right:auto; }
+
+#inputArea {
+    display:flex;
+    gap:5px;
+    padding:5px 10px;
+    background:#fff;
+    border-top:1px solid #ccc;
+    border-radius:10px 10px 0 0;
+    flex-shrink:0;
+    position:sticky;
+    bottom:0;
+    left:0;
+    right:0;
+}
+
+#message {
+    flex:1;
+    padding:10px;
+    border-radius:10px;
+    border:1px solid #ccc;
+    resize:none;
+    font-size:1em;
+    outline:none;
+    overflow:auto;
+    max-height:150px;
+}
+
+button {
+    padding:10px;
+    border-radius:10px;
+    border:none;
+    background:#4CAF50;
+    color:white;
+    cursor:pointer;
+    font-size:1em;
+}
+button:hover { background:#45a049; }
+
+.ai pre { background:#eee; padding:8px; border-radius:8px; overflow-x:auto; margin:5px 0 0; position:relative; }
+.copy-btn { position:absolute; top:6px; right:6px; background:#4CAF50; color:white; border:none; padding:3px 6px; font-size:0.8em; border-radius:5px; cursor:pointer; opacity:0.8; }
+.copy-btn:hover { opacity:1; background:#45a049; }
+
+/* Auto expand textarea */
+textarea:focus { overflow-y:auto; }
+
+/* Mobile adjustments */
+@media (max-width:768px){
+    body { height:100vh; }
+    #chat { margin-bottom:0; }
+    #inputArea { bottom:0; }
+}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+<h1>Chat with Harsh Bot 🤖</h1>
+<div id="chat"></div>
+<div id="inputArea">
+<textarea id="message" placeholder="Type a message..." rows="1"></textarea>
+<button onclick="sendMessage()">Send</button>
+</div>
+
+<script>
+const chatDiv = document.getElementById('chat');
+const apiKey = "sk-proj-*********************************************"; // replace with your API key
+
+let lastMessages = [];
+let lastResponses = [];
+
+function escapeHtml(unsafe){
+    return unsafe.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;')
+                 .replaceAll('"','&quot;').replaceAll("'","&#039;");
+}
+
+function formatCodeBlocks(text) {
+    return text.replace(/```([]*?)```/g, (match,p1)=>`<pre>${escapeHtml(p1)}</pre>`);
+}
+
+function addCopyButtons(container) {
+    container.querySelectorAll("pre").forEach(pre => {
+        if(pre.querySelector(".copy-btn")) return;
+        const btn = document.createElement("button");
+        btn.className = "copy-btn";
+        btn.textContent = "Copy";
+        btn.onclick = () => {
+            let lines = pre.innerText.split("\n");
+            if(lines.length>2) lines = lines.slice(1,-1); // remove first and last
+            navigator.clipboard.writeText(lines.join("\n")).then(()=> {
+                btn.textContent = "Copied!";
+                setTimeout(()=>btn.textContent="Copy",2000);
+            });
+        };
+        pre.appendChild(btn);
+    });
+}
+
+const textarea = document.getElementById("message");
+textarea.addEventListener("input", ()=> {
+    textarea.style.height = "auto";
+    textarea.style.height = textarea.scrollHeight + "px";
+});
+
+async function sendMessage(){
+    const message = textarea.value.trim();
+    if(!message) return;
+
+    // Save user message
+    lastMessages.push(message);
+    if(lastMessages.length>5) lastMessages.shift();
+
+    chatDiv.innerHTML += `<div class="message user">😊 You: ${escapeHtml(message)}</div>`;
+    chatDiv.scrollTop = chatDiv.scrollHeight;
+    textarea.value=''; textarea.style.height="auto";
+
+    const messageId = "msg-"+Date.now();
+    chatDiv.innerHTML += `<div class="message ai" id="${messageId}">🤖 AI: <div class="typing"></div></div>`;
+    const typingDiv = document.querySelector(`#${messageId} .typing`);
+
+    try {
+        // Build conversation history
+        const messagesForAI = [];
+        for(let i=0;i<lastMessages.length;i++){
+            messagesForAI.push({role:"user", content:lastMessages[i]});
+            if(lastResponses[i]) messagesForAI.push({role:"assistant", content:lastResponses[i]});
+        }
+        messagesForAI.push({role:"user", content:message});
+
+        const response = await fetch("https://api.openai.com/v1/chat/completions",{
+            method:"POST",
+            headers:{"Content-Type":"application/json","Authorization":`Bearer ${apiKey}`},
+            body: JSON.stringify({model:"gpt-4o-mini", messages:messagesForAI, stream:true})
+        });
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer="", liveText="";
+
+        while(true){
+            const {done,value} = await reader.read();
+            if(done) break;
+            buffer += decoder.decode(value,{stream:true});
+            const lines = buffer.split("\n");
+            buffer = lines.pop();
+            for(const line of lines){
+                if(line.trim()===""||!line.startsWith("data:")) continue;
+                if(line.trim()==="data: [DONE]") continue;
+                try{
+                    const json = JSON.parse(line.replace(/^data: /,""));
+                    const token = json.choices[0].delta.content||"";
+                    if(token){
+                        liveText+=token;
+                        typingDiv.innerHTML = marked.parse(formatCodeBlocks(liveText));
+                        addCopyButtons(typingDiv);
+                        chatDiv.scrollTop = chatDiv.scrollHeight;
+                    }
+                }catch(err){console.error(err);}
+            }
+        }
+
+        // Save AI response
+        lastResponses.push(liveText.trim());
+        if(lastResponses.length>5) lastResponses.shift();
+
+        console.log("Last 5 User Messages:", lastMessages);
+        console.log("Last 5 AI Responses:", lastResponses);
+
+    }catch(error){
+        chatDiv.innerHTML += `<div class="message ai" style="color:red;">Error: ${escapeHtml(error.message)}</div>`;
+    }
+}
+
+// Enter key
+textarea.addEventListener("keypress", e=>{
+    if(e.key==="Enter" && !e.shiftKey){
+        e.preventDefault();
+        sendMessage();
+    }
+});
+</script>
+</body>
+</html>
